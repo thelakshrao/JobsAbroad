@@ -3,7 +3,9 @@ import React, { useState, useEffect } from "react";
 import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { supabase } from "@/lib/supabase";
 import GlobalNavbar from "@/components/Navbar";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   User,
@@ -12,50 +14,22 @@ import {
   GraduationCap,
   FileText,
   Crown,
-  ChevronDown,
-  ChevronUp,
   Settings,
   FileCode,
   Award,
   Pencil,
+  Plus,
   Check,
   Trash2,
   Zap,
   X,
+  Camera,
+  Upload,
+  Loader2,
+
 } from "lucide-react";
 
 export default function ProfilePage() {
-  const router = useRouter();
-  const [userData, setUserData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-  const [formData, setFormData] = useState({
-    name: userData?.name || "",
-    phone: userData?.phone || "",
-    location: userData?.location || "",
-    dob: userData?.dob || "",
-    gender: userData?.gender || "",
-  });
-  const [education, setEducation] = useState(
-    userData?.education || {
-      college: {
-        name: "",
-        degree: "",
-        specialization: "",
-        scoreType: "percentage",
-        score: "",
-      },
-      twelfth: {
-        school: "",
-        board: "",
-        stream: "",
-        scoreType: "percentage",
-        score: "",
-      },
-      tenth: { school: "", board: "", scoreType: "percentage", score: "" },
-    },
-  );
   const SUGGESTED_SKILLS = [
     // WEB FRONTEND (1-60)
     "React",
@@ -554,6 +528,39 @@ export default function ProfilePage() {
     "Oculus SDK",
     "Computer Graphics",
   ];
+  const router = useRouter();
+  const [userData, setUserData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isUploadingPic, setIsUploadingPic] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [formData, setFormData] = useState({
+    name: userData?.name || "",
+    phone: userData?.phone || "",
+    location: userData?.location || "",
+    dob: userData?.dob || "",
+    gender: userData?.gender || "",
+  });
+  const [education, setEducation] = useState(
+    userData?.education || {
+      college: {
+        name: "",
+        degree: "",
+        specialization: "",
+        scoreType: "percentage",
+        score: "",
+      },
+      twelfth: {
+        school: "",
+        board: "",
+        stream: "",
+        scoreType: "percentage",
+        score: "",
+      },
+      tenth: { school: "", board: "", scoreType: "percentage", score: "" },
+    },
+  );
+
   const [experiences, setExperiences] = useState([
     {
       company: "",
@@ -570,6 +577,13 @@ export default function ProfilePage() {
   const [skills, setSkills] = useState([]);
   const [isEditingSkills, setIsEditingSkills] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [isUploadingResume, setIsUploadingResume] = useState(false);
+  const CLOUDINARY_UPLOAD_PRESET = "JA_profile_preset";
+  const CLOUDINARY_CLOUD_NAME = "dmrjqgkih";
+
+  const [certificates, setCertificates] = useState(
+    userData?.certificates || [{ name: "", organization: "", link: "" }],
+  );
 
   const filteredSuggestions =
     searchTerm.trim() === ""
@@ -597,8 +611,8 @@ export default function ProfilePage() {
         education: education,
         experiences: experiences,
         skills: skills,
+        certificates: certificates,
       };
-
       await updateDoc(userRef, updatePayload);
 
       setUserData((prev) => ({ ...prev, ...updatePayload }));
@@ -651,6 +665,97 @@ export default function ProfilePage() {
     });
     return () => unsubscribe();
   }, [router]);
+
+  const handleProfilePicUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setIsUploadingPic(true);
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+
+    try {
+      const res = await fetch(
+        `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,
+        { method: "POST", body: formData },
+      );
+      const data = await res.json();
+
+      if (data.secure_url) {
+        const userRef = doc(db, "users", userData.email.toLowerCase());
+        await updateDoc(userRef, { profilePicUrl: data.secure_url });
+
+        setUserData((prev) => ({ ...prev, profilePicUrl: data.secure_url }));
+      }
+    } catch (error) {
+      console.error("Upload error:", error);
+    } finally {
+      setIsUploadingPic(false);
+    }
+  };
+
+  const handleDeletePic = async () => {
+    if (window.confirm("Delete your profile photo?")) {
+      const userRef = doc(db, "users", userData.email.toLowerCase());
+      await updateDoc(userRef, { profilePicUrl: null });
+      setUserData((prev) => ({ ...prev, profilePicUrl: null }));
+    }
+  };
+
+  const handleResumeUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !userData?.email) return;
+    if (file.type !== "application/pdf") {
+      alert("Please upload a PDF file.");
+      return;
+    }
+
+    setIsUploadingResume(true);
+
+    try {
+      const fileExt = file.name.split(".").pop();
+      const fileName = `${userData.email.replace(/[^a-zA-Z0-9]/g, "_")}_${Date.now()}.${fileExt}`;
+
+      const { data, error } = await supabase.storage
+        .from("Resume")
+        .upload(fileName, file);
+
+      if (error) throw error;
+
+      const { data: urlData } = supabase.storage
+        .from("Resume")
+        .getPublicUrl(fileName);
+
+      const publicUrl = urlData.publicUrl;
+
+      const userRef = doc(db, "users", userData.email.toLowerCase());
+      await updateDoc(userRef, { resumeUrl: publicUrl });
+
+      setUserData((prev) => ({ ...prev, resumeUrl: publicUrl }));
+      alert("Resume uploaded successfully!");
+    } catch (error) {
+      console.error("Upload failed:", error.message);
+      alert(
+        "Upload failed. Make sure your 'resumes' bucket in Supabase is set to PUBLIC.",
+      );
+    } finally {
+      setIsUploadingResume(false);
+    }
+  };
+
+  const handleDeleteResume = async () => {
+    if (window.confirm("Are you sure you want to delete your resume?")) {
+      try {
+        const userRef = doc(db, "users", userData.email.toLowerCase());
+        await updateDoc(userRef, { resumeUrl: null });
+        setUserData((prev) => ({ ...prev, resumeUrl: null }));
+      } catch (error) {
+        console.error("Delete failed:", error);
+      }
+    }
+  };
+
   if (loading)
     return (
       <div className="h-screen flex items-center justify-center font-black uppercase text-xs tracking-widest text-black">
@@ -670,39 +775,10 @@ export default function ProfilePage() {
           </div>
         </div>
       )}
-      <GlobalNavbar />
+        <GlobalNavbar userData={userData} />
 
       <div className="max-w-350 mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 lg:p-10 items-start">
-        <aside className="lg:col-span-3 lg:sticky lg:top-32 w-full z-30">
-          <div className="lg:hidden fixed top-17 left-0 right-0 z-100 bg-[#eef2f6] px-4 py-2 border-b border-slate-200 shadow-sm">
-            <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="w-full bg-white rounded-3xl p-4 shadow-md border border-white flex items-center gap-4 active:scale-95 transition-all"
-            >
-              <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center text-white shrink-0">
-                <User size={20} />
-              </div>
-              <div className="flex-1 text-left">
-                <div className="flex justify-between items-center mb-1">
-                  <span className="text-[10px] font-black uppercase text-black tracking-tighter">
-                    {userData?.fullName}
-                  </span>
-                  <span className="text-[10px] font-black text-blue-600">
-                    75% Strength
-                  </span>
-                </div>
-                <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                  <div className="bg-black h-full w-[75%] rounded-full" />
-                </div>
-              </div>
-              {mobileMenuOpen ? (
-                <ChevronUp size={18} className="text-slate-400" />
-              ) : (
-                <ChevronDown size={18} className="text-slate-400" />
-              )}
-            </button>
-          </div>
-          <div className="lg:hidden h-24" />
+        <aside className="lg:col-span-3 lg:sticky lg:top-24 w-full z-30">
           <div
             className={`bg-white rounded-[40px] shadow-sm border border-white transition-all duration-500 ease-in-out overflow-hidden ${
               mobileMenuOpen
@@ -710,47 +786,92 @@ export default function ProfilePage() {
                 : "max-h-0 lg:max-h-none opacity-0 lg:opacity-100 p-0 lg:p-8"
             }`}
           >
-            <div className="hidden lg:block text-center">
-              <div className="relative w-28 h-28 mx-auto mb-6 group">
-                <div className="w-full h-full bg-blue-600 rounded-[35px] flex items-center justify-center text-white shadow-2xl shadow-blue-100">
-                  <User size={48} />
-                </div>
-              </div>
+            <div className="text-center mb-8">
+              <div className="relative w-28 h-28 mx-auto group">
+                <div className="w-full h-full bg-blue-600 rounded-[35px] flex items-center justify-center text-white shadow-2xl shadow-blue-100 overflow-hidden relative border-4 border-white">
+                  {userData?.profilePicUrl ? (
+                    <img
+                      src={userData.profilePicUrl}
+                      alt="Profile"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <User size={48} />
+                  )}
 
-              <h2 className="font-black text-xl uppercase tracking-tighter text-black leading-tight">
-                {userData?.fullName || "New User"}
-              </h2>
-              <p className="text-blue-600 text-[10px] font-black uppercase tracking-widest mt-2 mb-8">
-                {userData?.workStatus}
-              </p>
-              <div className="text-left bg-slate-50 p-5 rounded-3xl border border-slate-100 mb-8">
-                <div className="flex justify-between items-end mb-2">
-                  <span className="text-[9px] font-black uppercase text-black">
-                    Profile Strength
-                  </span>
-                  <span className="text-[9px] font-black text-blue-600">
-                    75%
-                  </span>
+                  {isUploadingPic && (
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center backdrop-blur-sm">
+                      <Loader2 size={24} className="animate-spin text-white" />
+                    </div>
+                  )}
                 </div>
-                <div className="w-full h-2.5 bg-white rounded-full overflow-hidden">
-                  <div className="bg-black h-full rounded-full w-[75%]" />
+
+                <div className="absolute -bottom-2 -right-2 flex gap-1">
+                  {userData?.profilePicUrl ? (
+                    <button
+                      onClick={handleDeletePic}
+                      className="p-2 bg-red-500 text-white rounded-xl shadow-lg hover:bg-black transition-all hover:scale-110"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  ) : (
+                    <label className="p-2 bg-black text-white rounded-xl shadow-lg cursor-pointer hover:bg-blue-600 transition-all hover:scale-110">
+                      <Camera size={14} />
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept="image/*"
+                        onChange={handleProfilePicUpload}
+                      />
+                    </label>
+                  )}
                 </div>
               </div>
             </div>
 
             <nav className="space-y-1">
               {[
-                { label: "Personal Info", icon: <Mail size={16} /> },
-                { label: "Summary", icon: <FileText size={16} /> },
-                { label: "Education", icon: <GraduationCap size={16} /> },
-                { label: "Experience", icon: <Briefcase size={16} /> },
-                { label: "Skill", icon: <Settings size={16} /> },
-                { label: "Resume", icon: <FileCode size={16} /> },
-                { label: "Certificate (Optional)", icon: <Award size={16} /> },
+                {
+                  target: "info",
+                  label: "Personal Info",
+                  icon: <Mail size={16} />,
+                },
+                {
+                  target: "summary",
+                  label: "Professional Summary",
+                  icon: <FileText size={16} />,
+                },
+                {
+                  target: "education",
+                  label: "Education",
+                  icon: <GraduationCap size={16} />,
+                },
+                {
+                  target: "experience",
+                  label: "Work Experience",
+                  icon: <Briefcase size={16} />,
+                },
+                {
+                  target: "skill",
+                  label: "Skills & Expertise",
+                  icon: <Settings size={16} />,
+                },
+                {
+                  target: "resume",
+                  label: "Resume / CV",
+                  icon: <FileCode size={16} />,
+                },
+                {
+                  target: "certifications",
+                  label: "Certifications",
+                  icon: <Award size={16} />,
+                },
               ].map((item, index) => (
-                <button
+                <a
                   key={index}
-                  className="w-full flex items-center gap-4 py-4 px-4 rounded-2xl text-left hover:bg-slate-50 transition-colors group"
+                  href={`#${item.target}`}
+                  className="w-full flex items-center gap-4 py-4 px-4 rounded-2xl text-left hover:bg-slate-50 transition-all group active:scale-95"
+                  onClick={() => setMobileMenuOpen(false)}
                 >
                   <span className="text-slate-400 group-hover:text-blue-600 transition-colors">
                     {item.icon}
@@ -758,7 +879,7 @@ export default function ProfilePage() {
                   <span className="text-[11px] font-black uppercase tracking-widest text-black">
                     {item.label}
                   </span>
-                </button>
+                </a>
               ))}
             </nav>
           </div>
@@ -894,7 +1015,7 @@ export default function ProfilePage() {
           </section>
 
           <section
-            id="summery"
+            id="summary"
             className="bg-white rounded-[30px] md:rounded-[40px] p-5 lg:p-10 shadow-sm border border-white"
           >
             <div className="flex items-center justify-between mb-4 md:mb-6">
@@ -945,7 +1066,6 @@ export default function ProfilePage() {
             </div>
 
             <div className="space-y-8 md:space-y-10">
-              {/* COLLEGE SECTION */}
               <div className="border-l-2 border-blue-600 pl-4 md:pl-6 space-y-4 md:space-y-6">
                 <p className="text-[9px] md:text-[10px] font-black uppercase text-blue-600 tracking-widest">
                   College / University
@@ -1031,7 +1151,7 @@ export default function ProfilePage() {
                     {isEditing ? (
                       <div className="flex gap-2">
                         <select
-                          className="text-[9px] font-black border-b border-black bg-transparent"
+                          className="text-[9px] font-black border-b border-black bg-transparent text-black"
                           value={education.college.scoreType}
                           onChange={(e) =>
                             setEducation({
@@ -1045,7 +1165,7 @@ export default function ProfilePage() {
                           }
                         >
                           <option value="percentage">%</option>
-                          <option value="cgpa">10</option>
+                          <option value="cgpa">CGPA from 10</option>
                         </select>
                         <input
                           type="number"
@@ -1132,7 +1252,7 @@ export default function ProfilePage() {
                     </p>
                     {isEditing ? (
                       <select
-                        className="text-[10px] font-black border-b border-black w-full bg-transparent py-1"
+                        className="text-[10px] font-black border-b border-black w-full bg-transparent py-1 text-black"
                         value={education.twelfth.stream}
                         onChange={(e) =>
                           setEducation({
@@ -1198,7 +1318,7 @@ export default function ProfilePage() {
                     </p>
                     {isEditing ? (
                       <input
-                        className="text-[10px] md:text-xs font-black border-b border-black w-full bg-transparent py-1"
+                        className="text-[10px] md:text-xs font-black border-b border-black w-full bg-transparent py-1 text-black"
                         value={education.tenth.school}
                         onChange={(e) =>
                           setEducation({
@@ -1222,7 +1342,7 @@ export default function ProfilePage() {
                     </p>
                     {isEditing ? (
                       <input
-                        className="text-[10px] md:text-xs font-black border-b border-black w-full bg-transparent py-1"
+                        className="text-[10px] md:text-xs font-black border-b border-black w-full bg-transparent py-1 text-black"
                         value={education.tenth.board}
                         onChange={(e) =>
                           setEducation({
@@ -1247,7 +1367,7 @@ export default function ProfilePage() {
                     {isEditing ? (
                       <input
                         type="number"
-                        className="text-[10px] md:text-xs font-black border-b border-black w-full bg-transparent py-1"
+                        className="text-[10px] md:text-xs font-black border-b border-black w-full bg-transparent py-1 text-black"
                         value={education.tenth.score}
                         onChange={(e) =>
                           setEducation({
@@ -1555,7 +1675,7 @@ export default function ProfilePage() {
                       <div className="absolute z-30 w-full mt-1 bg-white border border-slate-100 shadow-2xl rounded-2xl overflow-y-auto max-h-48 py-1">
                         {filteredSuggestions.map((s, index) => (
                           <button
-                            key={`${s}-${index}`} 
+                            key={`${s}-${index}`}
                             onClick={() => {
                               setSkills([...skills, s]);
                               setSearchTerm("");
@@ -1607,6 +1727,223 @@ export default function ProfilePage() {
               </div>
             </div>
           </section>
+
+          <section
+            id="resume"
+            className="bg-white rounded-[30px] md:rounded-[40px] p-5 lg:p-10 shadow-sm border border-white"
+          >
+            <div className="flex items-center justify-between mb-6 md:mb-10">
+              <h3 className="text-[11px] md:text-sm font-black uppercase tracking-widest text-black flex items-center gap-2 md:gap-3">
+                <FileCode size={16} className="text-blue-600" /> Professional
+                Resume
+              </h3>
+            </div>
+
+            {userData?.resumeUrl ? (
+              <div className="flex flex-col md:flex-row items-center justify-between gap-6 p-6 bg-slate-50/50 rounded-[30px] border border-slate-100">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 bg-white rounded-2xl flex items-center justify-center text-blue-600 shadow-sm border border-slate-50">
+                    <FileText size={28} />
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-black text-black uppercase tracking-widest">
+                      Resume_Final.pdf
+                    </p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase mt-1">
+                      Uploaded to Supabase Storage
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <a
+                    href={userData.resumeUrl}
+                    target="_blank"
+                    className="px-8 py-3.5 bg-black text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 transition-all active:scale-95 shadow-lg shadow-black/5"
+                  >
+                    View PDF
+                  </a>
+                  <button
+                    onClick={handleDeleteResume}
+                    className="p-3.5 bg-white text-red-500 rounded-2xl border border-red-50 hover:bg-red-500 hover:text-white transition-all active:scale-90"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="relative group">
+                <label className="flex flex-col items-center justify-center w-full h-56 border-2 border-dashed border-slate-100 rounded-[35px] bg-slate-50/30 cursor-pointer hover:bg-white hover:border-blue-200 transition-all group overflow-hidden">
+                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                    <div className="w-14 h-14 bg-white rounded-2xl shadow-sm flex items-center justify-center text-slate-300 mb-4 group-hover:text-blue-600 group-hover:scale-110 transition-all border border-slate-50">
+                      {isUploadingResume ? (
+                        <Loader2 size={24} className="animate-spin" />
+                      ) : (
+                        <Upload size={24} />
+                      )}
+                    </div>
+                    <p className="text-[11px] font-black text-black uppercase tracking-[0.2em]">
+                      {isUploadingResume
+                        ? "Uploading to Supabase..."
+                        : "Upload your Resume"}
+                    </p>
+                    <p className="text-[9px] font-bold text-slate-400 mt-2 uppercase tracking-widest">
+                      PDF Format only (Max 5MB)
+                    </p>
+                  </div>
+                  <input
+                    type="file"
+                    className="hidden"
+                    accept=".pdf"
+                    onChange={handleResumeUpload}
+                    disabled={isUploadingResume}
+                  />
+                </label>
+              </div>
+            )}
+          </section>
+
+          <section
+            id="certifications"
+            className="bg-white rounded-[30px] md:rounded-[40px] p-5 lg:p-10 shadow-sm border border-white"
+          >
+            <div className="flex items-center justify-between mb-8 md:mb-10">
+              <h3 className="text-[11px] md:text-sm font-black uppercase tracking-widest text-black flex items-center gap-2 md:gap-3">
+                <Award size={16} className="text-blue-600" /> Certifications
+              </h3>
+
+              <div className="flex items-center gap-3">
+                {isEditing && (
+                  <button
+                    onClick={() =>
+                      setCertificates([
+                        ...certificates,
+                        { name: "", organization: "", link: "" },
+                      ])
+                    }
+                    className="flex items-center gap-2 px-5 py-2.5 bg-black text-[9px] font-black text-white uppercase tracking-widest rounded-xl hover:bg-blue-600 transition-all active:scale-95 shadow-lg shadow-black/5"
+                  >
+                    <Plus size={14} /> Add New
+                  </button>
+                )}
+                <button
+                  onClick={() =>
+                    isEditing ? handleSave() : setIsEditing(true)
+                  }
+                  className={`p-2.5 rounded-xl transition-all shadow-sm ${
+                    isEditing
+                      ? "bg-green-600 text-white"
+                      : "bg-slate-50 text-black hover:bg-black hover:text-white"
+                  }`}
+                >
+                  {isEditing ? <Check size={16} /> : <Pencil size={16} />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-10">
+              {certificates.map((cert, index) => (
+                <div key={index} className="relative">
+                  {isEditing ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-6 bg-slate-50/50 p-6 rounded-[30px] border border-slate-100">
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">
+                          Certificate Name
+                        </label>
+                        <input
+                          type="text"
+                          value={cert.name}
+                          onChange={(e) => {
+                            const newCerts = [...certificates];
+                            newCerts[index].name = e.target.value;
+                            setCertificates(newCerts);
+                          }}
+                          placeholder="e.g. Google UX Design"
+                          className="w-full bg-white border border-slate-100 rounded-xl px-4 py-3 text-[13px] font-bold text-black focus:border-blue-600 focus:outline-none transition-all placeholder:text-slate-200"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">
+                          Organization
+                        </label>
+                        <input
+                          type="text"
+                          value={cert.organization}
+                          onChange={(e) => {
+                            const newCerts = [...certificates];
+                            newCerts[index].organization = e.target.value;
+                            setCertificates(newCerts);
+                          }}
+                          placeholder="e.g. Coursera"
+                          className="w-full bg-white border border-slate-100 rounded-xl px-4 py-3 text-[13px] font-bold text-black focus:border-blue-600 focus:outline-none transition-all placeholder:text-slate-200"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2 space-y-1.5 relative">
+                        <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest ml-1">
+                          Credential Link
+                        </label>
+                        <div className="flex gap-3">
+                          <input
+                            type="text"
+                            value={cert.link}
+                            onChange={(e) => {
+                              const newCerts = [...certificates];
+                              newCerts[index].link = e.target.value;
+                              setCertificates(newCerts);
+                            }}
+                            placeholder="https://credential-link.com"
+                            className="flex-1 bg-white border border-slate-100 rounded-xl px-4 py-3 text-[13px] font-bold text-black focus:border-blue-600 focus:outline-none transition-all placeholder:text-slate-200"
+                          />
+                          <button
+                            onClick={() =>
+                              setCertificates(
+                                certificates.filter((_, i) => i !== index),
+                              )
+                            }
+                            className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between group/item px-2">
+                      <div className="flex items-center gap-5">
+                        <div className="w-14 h-14 bg-slate-50 rounded-[20px] flex items-center justify-center text-slate-400 group-hover/item:bg-black group-hover/item:text-white transition-all duration-500 border border-slate-100">
+                          <Award size={24} />
+                        </div>
+                        <div>
+                          <h4 className="text-[13px] font-black text-black uppercase tracking-wider">
+                            {cert.name || "Untitled Certificate"}
+                          </h4>
+                          <p className="text-[10px] font-bold text-slate-400 uppercase mt-1 tracking-widest">
+                            {cert.organization || "Independent"}
+                          </p>
+                        </div>
+                      </div>
+
+                      {cert.link && (
+                        <a
+                          href={cert.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 px-6 py-3 bg-white border border-slate-100 text-black rounded-2xl text-[9px] font-black uppercase tracking-[0.2em] hover:bg-black hover:text-white transition-all shadow-sm active:scale-95"
+                        >
+                          View Credential <ExternalLink size={12} />
+                        </a>
+                      )}
+                    </div>
+                  )}
+                  {index !== certificates.length - 1 && (
+                    <div className="mt-10 border-b border-slate-50/50" />
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
 
         <aside className="lg:col-span-3 lg:sticky lg:top-32">
@@ -1622,7 +1959,7 @@ export default function ProfilePage() {
                 Guaranteed <br /> Placement.
               </h2>
               <p className="mt-4 text-[10px] font-bold text-slate-400 uppercase leading-relaxed tracking-wider">
-                Get hired globally within 90 days or 100% refund.
+                Get hired globally within 30 days or 100% refund.
               </p>
               <button className="w-full bg-white text-black mt-10 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all active:scale-95">
                 Claim Offer
